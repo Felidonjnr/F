@@ -1,0 +1,6 @@
+{
+  "name": "FirstClass OS",
+  "description": "AI Academic Accountability Operating System — continuous loop of planning, mastery tracking, pressure calculation, academic debt recovery, assessment engine, and AI coaching.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
