@@ -3,6 +3,7 @@ import path from 'path';
 import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 dotenv.config();
 
@@ -10,6 +11,24 @@ const app = express();
 const PORT = 3000;
 
 app.use(express.json({ limit: '20mb' }));
+
+// Lazy/safe initialization for Supabase Service-Role Admin Client (Server-only)
+let supabaseAdmin: SupabaseClient | null = null;
+export function getSupabaseAdmin(): SupabaseClient | null {
+  if (!supabaseAdmin) {
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (supabaseUrl && serviceRoleKey) {
+      supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false,
+        },
+      });
+    }
+  }
+  return supabaseAdmin;
+}
 
 // Lazy/safe initialization for Gemini API client
 let genAI: GoogleGenAI | null = null;
