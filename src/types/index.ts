@@ -275,12 +275,14 @@ export interface AIChatMessage {
 }
 
 export type AppTab =
+  | 'today'
+  | 'courses'
+  | 'review'
+  | 'coach'
+  | 'settings'
   | 'dashboard'
   | 'semester'
-  | 'courses'
   | 'study'
   | 'assessments'
   | 'debt'
-  | 'analytics'
-  | 'coach'
-  | 'settings';
+  | 'analytics';

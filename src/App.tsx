@@ -1,21 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { AICoachView } from './components/AICoach/AICoachView';
-import { AnalyticsView } from './components/Analytics/AnalyticsView';
 import { AssessmentRunnerModal } from './components/Assessments/AssessmentRunnerModal';
-import { AssessmentsView } from './components/Assessments/AssessmentsView';
 import { SignInView } from './components/Auth/SignInView';
 import { CourseDetailModal } from './components/Courses/CourseDetailModal';
-import { CoursesView } from './components/Courses/CoursesView';
+import { CoursesMasterView } from './components/Courses/CoursesMasterView';
 import { MaterialUploadModal } from './components/Courses/MaterialUploadModal';
 import { TopicModal } from './components/Courses/TopicModal';
-import { DashboardView } from './components/Dashboard/DashboardView';
-import { AcademicDebtView } from './components/Debt/AcademicDebtView';
 import { Header } from './components/Header';
 import { Navigation } from './components/Navigation';
-import { SemesterView } from './components/Semester/SemesterView';
+import { ReviewMasterView } from './components/Review/ReviewMasterView';
 import { SettingsView } from './components/Settings/SettingsView';
 import { ActiveSessionModal } from './components/Study/ActiveSessionModal';
-import { StudyView } from './components/Study/StudyView';
+import { TodayView } from './components/Today/TodayView';
 import { AppState, StateManager } from './services/storage';
 import { getSupabaseClient, isSupabaseConfigured } from './services/supabase';
 import {
@@ -30,7 +26,7 @@ import {
 export default function App() {
   const stateManager = StateManager.getInstance();
   const [state, setState] = useState<AppState>(stateManager.getState());
-  const [currentTab, setCurrentTab] = useState<AppTab>('dashboard');
+  const [currentTab, setCurrentTab] = useState<AppTab>('today');
   const [session, setSession] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [offlineMode, setOfflineMode] = useState(false);
@@ -141,43 +137,34 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-        {currentTab === 'dashboard' && (
-          <DashboardView
+        {(currentTab === 'today' || currentTab === 'dashboard' || currentTab === 'study') && (
+          <TodayView
             profile={state.profile}
             semester={state.semester}
             courses={state.courses}
             topics={state.topics}
             debts={state.debts}
             missions={state.missions}
+            assessments={state.assessments}
             pressure={pressure}
             academicHealth={academicHealth}
-            onNavigate={setCurrentTab}
-            onLaunchStudySession={(m) => setActiveStudyMission(m)}
-            onOpenResolveModal={(debt) => {
-              setCurrentTab('debt');
-            }}
-            onOpenNewAssessment={() => setCurrentTab('assessments')}
-            onOpenUploadMaterial={() => setIsUploadMaterialOpen(true)}
-            onRegenerateMissions={() => stateManager.regenerateDailyMissions()}
+            onStartSession={(m) => setActiveStudyMission(m)}
             onSelectCourse={(course) => setSelectedCourseForDetail(course)}
+            onRegenerateMissions={() => stateManager.regenerateDailyMissions()}
+            onNavigateTab={(tab) => setCurrentTab(tab)}
+            onResolveDebt={(id, ev) => stateManager.resolveDebt(id, ev)}
+            onOpenUploadMaterial={() => setIsUploadMaterialOpen(true)}
+            onTakeAssessment={(a) => setActiveAssessmentRunner(a)}
           />
         )}
 
-        {currentTab === 'semester' && (
-          <SemesterView
+        {(currentTab === 'courses' || currentTab === 'semester') && (
+          <CoursesMasterView
             semester={state.semester}
             courses={state.courses}
             topics={state.topics}
-            profile={state.profile}
-            onUpdateSemester={(updated) => stateManager.updateSemester(updated)}
-          />
-        )}
-
-        {currentTab === 'courses' && (
-          <CoursesView
-            courses={state.courses}
-            topics={state.topics}
             materials={state.materials}
+            onUpdateSemester={(updated) => stateManager.updateSemester(updated)}
             onAddCourse={(c) => stateManager.addCourse(c)}
             onSelectCourse={(course) => setSelectedCourseForDetail(course)}
             onOpenUploadMaterial={(course) => {
@@ -187,44 +174,11 @@ export default function App() {
           />
         )}
 
-        {currentTab === 'study' && (
-          <StudyView
-            missions={state.missions}
-            courses={state.courses}
-            topics={state.topics}
-            onLaunchStudySession={(m) => setActiveStudyMission(m)}
-            onRegenerateMissions={() => stateManager.regenerateDailyMissions()}
-          />
-        )}
-
-        {currentTab === 'assessments' && (
-          <AssessmentsView
-            assessments={state.assessments}
-            courses={state.courses}
-            topics={state.topics}
-            onTakeAssessment={(a) => setActiveAssessmentRunner(a)}
-            onAddAssessment={(a) => stateManager.addAssessment(a)}
-          />
-        )}
-
-        {currentTab === 'debt' && (
-          <AcademicDebtView
-            debts={state.debts}
-            courses={state.courses}
-            topics={state.topics}
-            errors={state.errors}
-            recoveryPlans={state.recoveryPlans}
-            onResolveDebt={(id, ev) => stateManager.resolveDebt(id, ev)}
-            onDeleteDebt={(id) => stateManager.deleteDebt(id)}
-            onAddDebt={(d) => stateManager.addDebt(d)}
-            onCreateRecoveryPlan={(p) => stateManager.createRecoveryPlan(p)}
-            onCompletePlanStep={(pId, sIdx) => stateManager.completeRecoveryPlanStep(pId, sIdx)}
-            onResolveError={(eId) => stateManager.markErrorResolved(eId)}
-          />
-        )}
-
-        {currentTab === 'analytics' && (
-          <AnalyticsView
+        {(currentTab === 'review' ||
+          currentTab === 'assessments' ||
+          currentTab === 'debt' ||
+          currentTab === 'analytics') && (
+          <ReviewMasterView
             profile={state.profile}
             courses={state.courses}
             topics={state.topics}
@@ -232,8 +186,24 @@ export default function App() {
             missions={state.missions}
             assessments={state.assessments}
             errors={state.errors}
+            recoveryPlans={state.recoveryPlans}
             pressure={pressure}
             academicHealth={academicHealth}
+            initialSubTab={
+              currentTab === 'debt'
+                ? 'debt'
+                : currentTab === 'analytics'
+                ? 'analytics'
+                : 'assessments'
+            }
+            onTakeAssessment={(a) => setActiveAssessmentRunner(a)}
+            onAddAssessment={(a) => stateManager.addAssessment(a)}
+            onResolveDebt={(id, ev) => stateManager.resolveDebt(id, ev)}
+            onDeleteDebt={(id) => stateManager.deleteDebt(id)}
+            onAddDebt={(d) => stateManager.addDebt(d)}
+            onCreateRecoveryPlan={(p) => stateManager.createRecoveryPlan(p)}
+            onCompletePlanStep={(pId, sIdx) => stateManager.completeRecoveryPlanStep(pId, sIdx)}
+            onResolveError={(eId) => stateManager.markErrorResolved(eId)}
           />
         )}
 
@@ -338,4 +308,3 @@ export default function App() {
     </div>
   );
 }
-
