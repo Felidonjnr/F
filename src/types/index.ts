@@ -121,6 +121,17 @@ export interface CourseMaterial {
   extracted_topics_count: number;
   raw_content_preview: string;
   is_indexed: boolean;
+  status?: 'processing' | 'ready' | 'failed';
+  extracted_text?: string;
+  storage_path?: string;
+}
+
+export interface MaterialChunk {
+  id: string;
+  material_id: string;
+  chunk_index: number;
+  content: string;
+  embedding?: number[];
 }
 
 export type MissionPriority = 'Priority' | 'Normal' | 'Remediate' | 'Pre-Exam';

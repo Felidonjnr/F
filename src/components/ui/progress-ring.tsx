@@ -72,7 +72,7 @@ export const ProgressRing: React.FC<ProgressRingProps> = ({
             {label ?? clamped}
           </span>
           {subLabel && (
-            <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 mt-0.5">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-600 mt-0.5">
               {subLabel}
             </span>
           )}

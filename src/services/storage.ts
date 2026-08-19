@@ -319,6 +319,8 @@ export class StateManager {
           extracted_topics_count: Number(m.extracted_topics_count),
           raw_content_preview: m.raw_content_preview || '',
           is_indexed: Boolean(m.is_indexed),
+          status: m.status || 'ready',
+          extracted_text: m.extracted_text || undefined,
         }));
         saveToStorage('materials', this.state.materials);
       }
@@ -847,6 +849,7 @@ export class StateManager {
       ...material,
       id: `mat-${Date.now()}`,
       uploaded_at: new Date().toISOString(),
+      status: material.status || 'ready',
     };
     this.state.materials = [newMat, ...this.state.materials];
     saveToStorage('materials', this.state.materials);
@@ -865,6 +868,8 @@ export class StateManager {
           extracted_topics_count: newMat.extracted_topics_count,
           raw_content_preview: newMat.raw_content_preview,
           is_indexed: newMat.is_indexed,
+          status: newMat.status,
+          extracted_text: newMat.extracted_text || null,
         })
       );
     }

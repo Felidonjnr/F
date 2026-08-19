@@ -94,7 +94,7 @@ export const Gauge: React.FC<GaugeProps> = ({
           <span className="text-2xl font-black font-mono text-slate-900 leading-none">
             {clamped}
           </span>
-          <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 mt-0.5">
+          <span className="text-xs uppercase font-bold tracking-wider text-slate-600 mt-0.5">
             / 100
           </span>
         </div>

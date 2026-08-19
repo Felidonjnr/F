@@ -126,12 +126,12 @@ export const TodayView: React.FC<TodayViewProps> = ({
   return (
     <div id="today-view-root" className="max-w-5xl mx-auto space-y-7 pb-16 animate-in fade-in duration-200">
       {/* 1. GREETING + DATE LINE (Small & Clean) */}
-      <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-1 pb-1">
+      <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-2 pb-1">
         <div>
           <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
             Good day, {profile.name.split(' ')[0]}
           </h1>
-          <p className="text-xs text-slate-500 font-medium mt-0.5">
+          <p className="text-xs text-slate-600 font-medium mt-0.5">
             {formattedDate} • {semester.title} (Week {semester.current_week} of {semester.total_weeks})
           </p>
         </div>
@@ -146,12 +146,76 @@ export const TodayView: React.FC<TodayViewProps> = ({
         </div>
       </div>
 
-      {/* 2. PRESSURE GAUGE + HEALTH RING (Side by side on desktop, stacked on mobile) */}
+      {/* 2. NEXT MOVE HERO CARD (CROWN JEWEL — Placed at the TOP) */}
+      {!dismissedHero && (
+        <section id="today-next-move-hero">
+          <Card className="bg-gradient-to-br from-slate-900 via-slate-950 to-slate-950 text-white border border-slate-800/90 border-t-2 border-t-amber-400/50 p-6 sm:p-8 shadow-2xl relative overflow-hidden">
+            {/* Background Ambient Glow */}
+            <div className="absolute top-0 right-0 w-96 h-96 bg-amber-500/15 rounded-full blur-3xl pointer-events-none" />
+
+            <div className="relative z-10 space-y-5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center space-x-2.5">
+                  <span className="text-xs font-mono font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-amber-400/15 text-amber-300 border border-amber-400/40">
+                    Next Move Recommended
+                  </span>
+                  <span className="text-xs font-bold text-slate-300">
+                    Pressure Band: <span className="text-amber-300 font-black">{pressure.band}</span>
+                  </span>
+                </div>
+
+                {pressure.top_risk_topic && (
+                  <span className="text-xs font-semibold text-rose-200 bg-rose-950/70 border border-rose-500/40 px-3 py-1 rounded-full flex items-center gap-1.5">
+                    <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+                    Top Risk: {pressure.top_risk_topic}
+                  </span>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight leading-snug">
+                  {pressure.next_mandatory_action ||
+                    'Execute today’s active recall mission to maintain target CGPA velocity.'}
+                </h2>
+                <p className="text-sm text-slate-200 max-w-2xl leading-relaxed">
+                  {topMission
+                    ? `Immediate deliberate practice session scheduled for ${topMission.topic_name} (${topMission.course_code}).`
+                    : 'All priority queues clear. Ready for exploratory synthesis or diagnostic check.'}
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3 pt-1">
+                {topMission && (
+                  <Button
+                    variant="accent"
+                    size="lg"
+                    onClick={() => onStartSession(topMission)}
+                  >
+                    <Play className="w-5 h-5 fill-slate-950" />
+                    <span>Start Session Now</span>
+                  </Button>
+                )}
+
+                <Button
+                  variant="ghost"
+                  size="md"
+                  onClick={() => setDismissedHero(true)}
+                  className="text-slate-300 hover:text-white hover:bg-slate-800/80 border border-slate-700 h-12 px-5 text-sm"
+                >
+                  <span>Dismiss for Today</span>
+                </Button>
+              </div>
+            </div>
+          </Card>
+        </section>
+      )}
+
+      {/* 3. PRESSURE GAUGE + HEALTH RING (Side by side on desktop, stacked on mobile) */}
       <section id="today-gauges-panel" className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Left: Deterministic Pressure Gauge */}
         <Card className="p-5 sm:p-6 flex flex-col items-center justify-between text-center relative overflow-hidden">
           <div className="w-full flex items-center justify-between mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-600">
               Deterministic Pressure Engine
             </span>
             <Badge
@@ -170,9 +234,9 @@ export const TodayView: React.FC<TodayViewProps> = ({
             </Badge>
           </div>
 
-          <Gauge value={pressure.score} band={pressure.band} size={190} showDetails={false} />
+          <Gauge value={pressure.score} band={pressure.band} size={170} showDetails={false} />
 
-          <p className="text-xs text-slate-500 max-w-xs mt-2 leading-relaxed">
+          <p className="text-xs text-slate-600 max-w-xs mt-2 leading-relaxed font-medium">
             {pressure.score >= 70
               ? 'Urgent attention required. Deficits threaten your First-Class target floor.'
               : pressure.score >= 40
@@ -184,7 +248,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
         {/* Right: Academic Health Ring */}
         <Card className="p-5 sm:p-6 flex flex-col items-center justify-between text-center relative overflow-hidden">
           <div className="w-full flex items-center justify-between mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-600">
               Academic Health Score
             </span>
             <Badge variant="stable" size="sm">
@@ -202,85 +266,21 @@ export const TodayView: React.FC<TodayViewProps> = ({
             />
           </div>
 
-          <p className="text-xs text-slate-500 max-w-xs mt-2 leading-relaxed">
+          <p className="text-xs text-slate-600 max-w-xs mt-2 leading-relaxed font-medium">
             Composite index of active mastery, syllabus velocity, consistency streak, and debt remediation.
           </p>
         </Card>
       </section>
 
-      {/* 3. NEXT MOVE HERO CARD */}
-      {!dismissedHero && (
-        <section id="today-next-move-hero">
-          <Card className="bg-slate-950 text-white border-slate-800 p-5 sm:p-6 shadow-xl relative overflow-hidden">
-            {/* Background Accent Glow */}
-            <div className="absolute top-0 right-0 w-80 h-80 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
-
-            <div className="relative z-10 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center space-x-2">
-                  <span className="text-[10px] font-mono font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/30">
-                    Next Move Recommended
-                  </span>
-                  <span className="text-xs font-bold text-slate-400">
-                    Pressure Band: <span className="text-amber-400">{pressure.band}</span>
-                  </span>
-                </div>
-
-                {pressure.top_risk_topic && (
-                  <span className="text-xs font-semibold text-rose-300 bg-rose-950/60 border border-rose-800/80 px-2.5 py-0.5 rounded-full flex items-center gap-1">
-                    <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
-                    Top Risk: {pressure.top_risk_topic}
-                  </span>
-                )}
-              </div>
-
-              <div className="space-y-1">
-                <h2 className="text-lg sm:text-xl font-black text-white tracking-tight">
-                  {pressure.next_mandatory_action ||
-                    'Execute today’s active recall mission to maintain target CGPA velocity.'}
-                </h2>
-                <p className="text-xs text-slate-300 max-w-2xl leading-relaxed">
-                  {topMission
-                    ? `Immediate deliberate practice session scheduled for ${topMission.topic_name} (${topMission.course_code}).`
-                    : 'All priority queues clear. Ready for exploratory synthesis or diagnostic check.'}
-                </p>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-3 pt-2">
-                {topMission && (
-                  <Button
-                    variant="accent"
-                    size="md"
-                    onClick={() => onStartSession(topMission)}
-                  >
-                    <Play className="w-4 h-4 fill-slate-950" />
-                    <span>Start Session Now</span>
-                  </Button>
-                )}
-
-                <Button
-                  variant="ghost"
-                  size="md"
-                  onClick={() => setDismissedHero(true)}
-                  className="text-slate-400 hover:text-white hover:bg-slate-900 border border-slate-800"
-                >
-                  <span>Dismiss for Today</span>
-                </Button>
-              </div>
-            </div>
-          </Card>
-        </section>
-      )}
-
       {/* 4. RISK STRIP: Courses sorted by pressure contribution */}
       <section id="today-risk-strip" className="space-y-2.5">
         <div className="flex items-center justify-between">
-          <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+          <h2 className="text-xs font-bold uppercase tracking-wider text-slate-600">
             Course Risk & Pressure Strip
           </h2>
           <button
             onClick={() => onNavigateTab('courses')}
-            className="text-xs font-bold text-slate-600 hover:text-slate-900 flex items-center space-x-0.5 cursor-pointer"
+            className="text-xs font-bold text-slate-700 hover:text-slate-950 flex items-center space-x-0.5 cursor-pointer"
           >
             <span>View All</span>
             <ChevronRight className="w-3.5 h-3.5" />
@@ -308,16 +308,16 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   <span className="font-mono font-black text-xs text-slate-900 group-hover:text-amber-600 transition-colors">
                     {course.code}
                   </span>
-                  <span className="text-[10px] font-bold text-slate-400 font-mono">
+                  <span className="text-xs font-bold text-slate-600 font-mono">
                     {course.units}U
                   </span>
                 </div>
 
                 <div className="flex items-center justify-between text-xs">
-                  <span className="text-slate-500 font-medium text-[11px] truncate max-w-[85px]">
+                  <span className="text-slate-600 font-semibold text-xs truncate max-w-[95px]">
                     {course.name}
                   </span>
-                  <span className="font-bold font-mono text-slate-900">{mastery}%</span>
+                  <span className="font-bold font-mono text-slate-900 text-xs">{mastery}%</span>
                 </div>
 
                 <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
@@ -345,7 +345,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
           <div className="flex items-center justify-between">
             <div>
               <div className="flex items-center space-x-2">
-                <span className="text-xs uppercase font-bold tracking-wider text-slate-400">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-600">
                   Execution Plan
                 </span>
                 <Badge variant="accent" size="sm">
@@ -369,7 +369,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
           {/* Time tracker bar */}
           <Card className="p-4 space-y-2">
             <div className="flex justify-between items-center text-xs font-bold">
-              <span className="text-slate-600 flex items-center">
+              <span className="text-slate-700 flex items-center">
                 <Clock className="w-3.5 h-3.5 mr-1.5 text-amber-600" />
                 Time Executed Today
               </span>
@@ -393,7 +393,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
               <Card className="p-8 text-center">
                 <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
                 <p className="text-sm font-bold text-slate-800">All missions clear for today</p>
-                <p className="text-xs text-slate-500 mt-1 mb-4">
+                <p className="text-xs text-slate-600 mt-1 mb-4 font-medium">
                   Regenerate your daily plan to generate new deliberate practice targets.
                 </p>
                 <Button variant="default" size="sm" onClick={handleRegenerate}>
@@ -428,8 +428,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
                           <span className="text-xs font-mono font-bold uppercase px-2 py-0.5 rounded bg-slate-900 text-amber-300">
                             {mission.course_code}
                           </span>
-                          <span className="text-xs font-semibold text-slate-500 flex items-center">
-                            <Clock className="w-3.5 h-3.5 mr-1 text-slate-400" />
+                          <span className="text-xs font-semibold text-slate-700 flex items-center">
+                            <Clock className="w-3.5 h-3.5 mr-1 text-slate-600" />
                             {mission.estimated_duration_minutes} Mins
                           </span>
                           <Badge variant="secondary" size="sm">
@@ -441,7 +441,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                           {mission.topic_name}
                         </h3>
 
-                        <p className="text-xs text-slate-500 line-clamp-2">
+                        <p className="text-xs text-slate-600 line-clamp-2 font-medium">
                           {mission.description ||
                             'Active recall self-explanation followed by timed multi-step practice drill.'}
                         </p>
@@ -482,7 +482,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
             </div>
             <button
               onClick={() => onNavigateTab('review')}
-              className="text-xs font-bold text-slate-600 hover:text-slate-900 flex items-center cursor-pointer"
+              className="text-xs font-bold text-slate-700 hover:text-slate-950 flex items-center cursor-pointer"
             >
               <span>Ledger</span>
               <ChevronRight className="w-3.5 h-3.5" />
@@ -494,7 +494,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
               <Card className="p-6 text-center">
                 <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-1.5" />
                 <div className="text-xs font-bold text-slate-800">Zero Academic Deficits</div>
-                <div className="text-[11px] text-slate-400 mt-0.5">
+                <div className="text-xs text-slate-600 mt-0.5 font-medium">
                   All prerequisite mastery thresholds satisfied.
                 </div>
               </Card>
@@ -505,7 +505,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   className="p-4 space-y-2 hover:border-rose-300 transition-all"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-mono font-bold uppercase px-1.5 py-0.5 rounded bg-slate-900 text-white">
+                    <span className="text-xs font-mono font-bold uppercase px-1.5 py-0.5 rounded bg-slate-900 text-white">
                       {debt.course_code}
                     </span>
                     <Badge
@@ -524,11 +524,11 @@ export const TodayView: React.FC<TodayViewProps> = ({
 
                   <div>
                     <h4 className="text-xs font-bold text-slate-900">{debt.title}</h4>
-                    <p className="text-[11px] text-slate-500 line-clamp-2 mt-0.5">{debt.reason}</p>
+                    <p className="text-xs text-slate-600 line-clamp-2 mt-0.5 font-medium">{debt.reason}</p>
                   </div>
 
                   <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-                    <span className="text-[10px] text-slate-400 font-mono">
+                    <span className="text-xs text-slate-600 font-mono font-semibold">
                       ~{debt.estimated_recovery_minutes} mins
                     </span>
                     <button
@@ -536,7 +536,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                         setResolveEvidence('');
                         setResolvingDebt(debt);
                       }}
-                      className="text-xs font-bold text-amber-700 hover:text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200/60 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                      className="text-xs font-bold text-amber-900 hover:text-amber-950 bg-amber-100 hover:bg-amber-200 border border-amber-300 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
                     >
                       Resolve
                     </button>
@@ -552,8 +552,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
       <div className="fixed bottom-20 sm:bottom-8 right-6 z-40">
         <div className="relative">
           {showQuickActionMenu && (
-            <div className="absolute bottom-14 right-0 w-56 bg-slate-950 text-white rounded-2xl shadow-2xl border border-slate-800 p-2 space-y-1 animate-in fade-in slide-in-from-bottom-2 duration-150">
-              <div className="px-3 py-1.5 text-[10px] uppercase font-bold text-slate-400 border-b border-slate-800">
+            <div className="absolute bottom-14 right-0 w-60 bg-slate-950 text-white rounded-2xl shadow-2xl border border-slate-800 p-2 space-y-1 animate-in fade-in slide-in-from-bottom-2 duration-150">
+              <div className="px-3 py-1.5 text-xs uppercase font-bold text-slate-300 border-b border-slate-800">
                 Quick Actions
               </div>
               <button
@@ -561,7 +561,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   setShowQuickActionMenu(false);
                   onOpenUploadMaterial();
                 }}
-                className="w-full flex items-center space-x-2.5 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800 rounded-xl transition-colors text-left cursor-pointer"
+                className="w-full flex items-center space-x-2.5 px-3 py-2 text-xs font-semibold text-slate-100 hover:bg-slate-800 rounded-xl transition-colors text-left cursor-pointer"
               >
                 <UploadCloud className="w-4 h-4 text-purple-400" />
                 <span>Upload Syllabus / PDF</span>
@@ -573,7 +573,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   if (onOpenAddAssessment) onOpenAddAssessment();
                   else onNavigateTab('review');
                 }}
-                className="w-full flex items-center space-x-2.5 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800 rounded-xl transition-colors text-left cursor-pointer"
+                className="w-full flex items-center space-x-2.5 px-3 py-2 text-xs font-semibold text-slate-100 hover:bg-slate-800 rounded-xl transition-colors text-left cursor-pointer"
               >
                 <Target className="w-4 h-4 text-sky-400" />
                 <span>Create Diagnostic Test</span>
@@ -585,7 +585,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   if (onOpenAddCourse) onOpenAddCourse();
                   else onNavigateTab('courses');
                 }}
-                className="w-full flex items-center space-x-2.5 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800 rounded-xl transition-colors text-left cursor-pointer"
+                className="w-full flex items-center space-x-2.5 px-3 py-2 text-xs font-semibold text-slate-100 hover:bg-slate-800 rounded-xl transition-colors text-left cursor-pointer"
               >
                 <BookOpen className="w-4 h-4 text-amber-400" />
                 <span>Add New Course</span>

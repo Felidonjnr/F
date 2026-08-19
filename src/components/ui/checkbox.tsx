@@ -37,14 +37,14 @@ export const Checkbox: React.FC<CheckboxProps> = ({
         <div
           className={`w-5 h-5 rounded-lg border flex items-center justify-center transition-all ${
             checked
-              ? 'bg-slate-900 border-slate-900 text-amber-300 shadow-2xs'
+              ? 'bg-emerald-600 border-emerald-600 text-white shadow-2xs'
               : 'bg-white border-slate-300 hover:border-slate-400'
           }`}
         >
           {checked && <Check className="w-3.5 h-3.5 stroke-[3]" />}
         </div>
       </div>
-      {label && <div className="text-xs sm:text-sm font-medium text-slate-900">{label}</div>}
+      {label && <div className="text-xs sm:text-sm font-semibold text-slate-900">{label}</div>}
     </label>
   );
 };
