@@ -165,6 +165,15 @@ export const MaterialUploadModal: React.FC<MaterialUploadModalProps> = ({
 
       onUploadAndExtract(material, extractedTopics);
 
+      // Fire-and-forget topic graph link generation
+      fetch('/api/ai/build-topic-links', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ courseId: selectedCourse.id }),
+      }).catch((graphErr) => {
+        console.warn('Background build-topic-links triggered:', graphErr);
+      });
+
       // Brief delay to display success state (chunk count + topics found)
       setTimeout(() => {
         setIsProcessing(false);

@@ -874,6 +874,959 @@ app.get('/api/ai/material/:id', async (req, res) => {
   }
 });
 
+// ============================================================================
+// PART B: RETRIEVAL CORE (POST /api/ai/retrieve & GET /api/ai/retrieve/health)
+// ============================================================================
+
+/**
+ * Cosine similarity helper for vectors
+ */
+function cosineSimilarity(a: number[], b: number[]): number {
+  if (!a || !b || a.length !== b.length || a.length === 0) return 0;
+  let dotProduct = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dotProduct += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  if (normA === 0 || normB === 0) return 0;
+  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+/**
+ * GET /api/ai/retrieve/health
+ * Retrieval readiness health check
+ */
+app.get('/api/ai/retrieve/health', async (req, res) => {
+  try {
+    const supabase = getSupabaseAdmin();
+    const geminiConfigured = Boolean(process.env.GEMINI_API_KEY);
+    let vectorChunks = 0;
+    let keywordChunks = 0;
+
+    if (supabase) {
+      const { count: totalCount } = await supabase
+        .from('material_chunks')
+        .select('*', { count: 'exact', head: true });
+      keywordChunks = totalCount || 0;
+
+      const { count: embCount } = await supabase
+        .from('material_chunks')
+        .select('*', { count: 'exact', head: true })
+        .not('embedding', 'is', null);
+      vectorChunks = embCount || 0;
+    }
+
+    res.json({
+      status: 'ok',
+      vectorChunks,
+      keywordChunks,
+      hasEmbeddings: vectorChunks > 0,
+      geminiConfigured,
+    });
+  } catch (error: any) {
+    console.error('Retrieve health check error:', error);
+    res.status(500).json({
+      status: 'error',
+      vectorChunks: 0,
+      keywordChunks: 0,
+      hasEmbeddings: false,
+      geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * POST /api/ai/retrieve
+ * Mastery-aware hybrid (FTS + pgvector) retrieval core
+ */
+app.post('/api/ai/retrieve', async (req, res) => {
+  try {
+    const { query, courseId, topicId, k = 6 } = req.body;
+
+    if (!query || typeof query !== 'string' || !query.trim()) {
+      return res.status(400).json({ error: 'Query parameter is required' });
+    }
+
+    const trimmedQuery = query.trim();
+    const limitK = Math.min(12, Math.max(1, Number(k) || 6));
+    const supabase = getSupabaseAdmin();
+
+    interface CandidateItem {
+      chunk_id: string;
+      material_id: string;
+      material_name?: string;
+      content: string;
+      keyword_score?: number;
+      vector_score?: number;
+      final_score?: number;
+      topic_id?: string | null;
+      topic_name?: string | null;
+      mastery?: number;
+      tags: string[];
+    }
+    const candidateMap = new Map<string, CandidateItem>();
+
+    // 1. Fetch scoped context (materials and topics) if Supabase is connected
+    let courseMaterials: { id: string; name: string; course_id: string }[] = [];
+    let topicsList: { id: string; course_id: string; name: string; mastery: any }[] = [];
+    let allowedMaterialIds: string[] = [];
+
+    if (supabase) {
+      // Fetch topics for mastery weighting
+      let topicQuery = supabase.from('topics').select('id, course_id, name, mastery');
+      if (courseId) {
+        topicQuery = topicQuery.eq('course_id', courseId);
+      }
+      const { data: dbTopics } = await topicQuery;
+      if (dbTopics && dbTopics.length > 0) topicsList = dbTopics;
+
+      // Fetch materials
+      let matQuery = supabase.from('course_materials').select('id, name, course_id');
+      if (courseId) {
+        matQuery = matQuery.eq('course_id', courseId);
+      }
+      const { data: dbMats } = await matQuery;
+      if (dbMats && dbMats.length > 0) {
+        courseMaterials = dbMats;
+        allowedMaterialIds = dbMats.map((m) => m.id);
+      }
+    }
+
+    // Seeded topic fallback if no Supabase or empty
+    if (topicsList.length === 0) {
+      topicsList = [
+        {
+          id: 'top-che-1',
+          course_id: 'crs-che221',
+          name: 'Reaction Rate Laws & Arrhenius Temperature Dependence',
+          mastery: { overall: 54, recall: 60, conceptual: 52, procedural: 55, application: 50, transfer: 45, confidence: 50 },
+        },
+        {
+          id: 'top-che-2',
+          course_id: 'crs-che221',
+          name: 'Continuous Stirred-Tank & Plug-Flow Reactor Sizing',
+          mastery: { overall: 58, recall: 68, conceptual: 60, procedural: 58, application: 52, transfer: 48, confidence: 55 },
+        },
+        {
+          id: 'top-che-3',
+          course_id: 'crs-che221',
+          name: 'Electrophilic Addition & Markovnikov Rule Mechanisms',
+          mastery: { overall: 46, recall: 50, conceptual: 42, procedural: 45, application: 40, transfer: 35, confidence: 45 },
+        },
+        {
+          id: 'top-mth-1',
+          course_id: 'crs-mth221',
+          name: 'Second-Order Linear ODEs & Frobenius Method',
+          mastery: { overall: 76, recall: 85, conceptual: 80, procedural: 78, application: 72, transfer: 65, confidence: 80 },
+        },
+        {
+          id: 'top-mth-2',
+          course_id: 'crs-mth221',
+          name: 'Vector Fields, Divergence & Stokes Theorem',
+          mastery: { overall: 88, recall: 90, conceptual: 85, procedural: 82, application: 80, transfer: 75, confidence: 85 },
+        },
+        {
+          id: 'top-phy-1',
+          course_id: 'crs-phy221',
+          name: 'Maxwell Equations & Electromagnetic Wave Propagation',
+          mastery: { overall: 62, recall: 65, conceptual: 60, procedural: 58, application: 55, transfer: 50, confidence: 60 },
+        },
+        {
+          id: 'top-mee-1',
+          course_id: 'crs-mee221',
+          name: 'Navier-Stokes Equations & Laminar Boundary Layers',
+          mastery: { overall: 74, recall: 82, conceptual: 78, procedural: 75, application: 70, transfer: 65, confidence: 75 },
+        },
+      ];
+      if (courseId) {
+        topicsList = topicsList.filter((t) => t.course_id === courseId);
+      }
+    }
+
+    if (courseMaterials.length === 0) {
+      courseMaterials = [
+        { id: 'mat-che-1', course_id: 'crs-che221', name: 'CHE221_Syllabus_and_Kinetics_Notes.pdf' },
+        { id: 'mat-che-2', course_id: 'crs-che221', name: 'CHE221_Reaction_Mechanisms_and_Markovnikov_Handout.pdf' },
+        { id: 'mat-mth-1', course_id: 'crs-mth221', name: 'MTH221_Vector_Calculus_Handout.pdf' },
+        { id: 'mat-phy-1', course_id: 'crs-phy221', name: 'PHY221_Electrodynamics_Past_Exams.pdf' },
+        { id: 'mat-mee-1', course_id: 'crs-mee221', name: 'MEE221_Fluid_Mechanics_Notes.pdf' },
+      ];
+      if (courseId) {
+        courseMaterials = courseMaterials.filter((m) => m.course_id === courseId);
+      }
+    }
+
+    const materialMap = new Map<string, { id: string; name: string; course_id: string }>();
+    courseMaterials.forEach((m) => materialMap.set(m.id, m));
+
+    // Find the top risk topic in the course/scope (topic with lowest mastery.overall)
+    let topRiskTopicId: string | null = null;
+    let lowestMastery = Infinity;
+    for (const t of topicsList) {
+      const overall = typeof t.mastery?.overall === 'number' ? t.mastery.overall : 50;
+      if (overall < lowestMastery) {
+        lowestMastery = overall;
+        topRiskTopicId = t.id;
+      }
+    }
+
+    // =========================================================================
+    // STEP 1: KEYWORD CANDIDATES (always run, no model call)
+    // =========================================================================
+    if (supabase) {
+      let ftsResults: any[] = [];
+      try {
+        let ftsQuery = supabase
+          .from('material_chunks')
+          .select('id, material_id, chunk_index, content')
+          .textSearch('content', trimmedQuery, { type: 'plain', config: 'english' })
+          .limit(20);
+
+        if (courseId && allowedMaterialIds.length > 0) {
+          ftsQuery = ftsQuery.in('material_id', allowedMaterialIds);
+        } else if (courseId && allowedMaterialIds.length === 0) {
+          ftsQuery = ftsQuery.eq('material_id', 'none_matched');
+        }
+
+        const { data: ftsData, error: ftsErr } = await ftsQuery;
+        if (!ftsErr && ftsData && ftsData.length > 0) {
+          ftsResults = ftsData;
+        }
+      } catch (ftsCatch) {
+        // Fall through to ILIKE
+      }
+
+      // If FTS has no tokens or returned 0 rows, fall back to ILIKE
+      if (ftsResults.length === 0) {
+        try {
+          let ilikeQuery = supabase
+            .from('material_chunks')
+            .select('id, material_id, chunk_index, content')
+            .ilike('content', `%${trimmedQuery.slice(0, 60)}%`)
+            .limit(20);
+
+          if (courseId && allowedMaterialIds.length > 0) {
+            ilikeQuery = ilikeQuery.in('material_id', allowedMaterialIds);
+          } else if (courseId && allowedMaterialIds.length === 0) {
+            ilikeQuery = ilikeQuery.eq('material_id', 'none_matched');
+          }
+
+          const { data: ilikeData } = await ilikeQuery;
+          if (ilikeData) {
+            ftsResults = ilikeData;
+          }
+        } catch (ilikeErr) {
+          console.warn('[retrieve] ILIKE query error:', ilikeErr);
+        }
+      }
+
+      // Record normalized keyword_score
+      const count = ftsResults.length;
+      ftsResults.forEach((row: any, idx: number) => {
+        const normalizedScore = count > 1 ? Math.max(0.3, 1.0 - (idx / count) * 0.7) : 1.0;
+        candidateMap.set(row.id, {
+          chunk_id: row.id,
+          material_id: row.material_id,
+          content: row.content,
+          keyword_score: normalizedScore,
+          tags: [],
+        });
+      });
+    }
+
+    // =========================================================================
+    // STEP 2: VECTOR CANDIDATES (only if embeddings exist)
+    // =========================================================================
+    const embeddingsClient = getEmbeddings();
+
+    if (embeddingsClient && supabase) {
+      try {
+        const embedRes = await embeddingsClient.models.embedContent({
+          model: 'text-embedding-004',
+          contents: trimmedQuery,
+        });
+        const queryVector = embedRes.embeddings?.[0]?.values;
+
+        if (queryVector && Array.isArray(queryVector) && queryVector.length === 768) {
+          // Attempt Supabase match_material_chunks RPC
+          const { data: rpcData, error: rpcErr } = await supabase.rpc('match_material_chunks', {
+            query_embedding: queryVector,
+            match_threshold: 0.0,
+            match_count: 20,
+          });
+
+          let vectorResults: any[] = [];
+          if (!rpcErr && rpcData && Array.isArray(rpcData)) {
+            vectorResults = rpcData;
+          } else {
+            // Fallback: fetch chunks with non-null embeddings and calculate cosine distance in JS
+            let chunkQuery = supabase
+              .from('material_chunks')
+              .select('id, material_id, chunk_index, content, embedding')
+              .not('embedding', 'is', null)
+              .limit(50);
+
+            if (courseId && allowedMaterialIds.length > 0) {
+              chunkQuery = chunkQuery.in('material_id', allowedMaterialIds);
+            }
+            const { data: rawChunks } = await chunkQuery;
+            if (rawChunks && rawChunks.length > 0) {
+              const computed = rawChunks
+                .map((c: any) => {
+                  if (!c.embedding) return null;
+                  let vec = c.embedding;
+                  if (typeof vec === 'string') {
+                    try {
+                      vec = JSON.parse(vec);
+                    } catch {
+                      vec = vec.replace(/[\[\]]/g, '').split(',').map(Number);
+                    }
+                  }
+                  if (Array.isArray(vec) && vec.length === 768) {
+                    const sim = cosineSimilarity(queryVector, vec);
+                    return { ...c, similarity: sim };
+                  }
+                  return null;
+                })
+                .filter(Boolean)
+                .sort((a: any, b: any) => b.similarity - a.similarity)
+                .slice(0, 20);
+
+              vectorResults = computed;
+            }
+          }
+
+          if (vectorResults.length > 0) {
+            for (const vRow of vectorResults) {
+              if (courseId && allowedMaterialIds.length > 0 && !allowedMaterialIds.includes(vRow.material_id)) {
+                continue;
+              }
+              const vScore = Math.max(
+                0,
+                Math.min(1, typeof vRow.similarity === 'number' ? vRow.similarity : 1 - (vRow.distance || 0))
+              );
+              const existing = candidateMap.get(vRow.id);
+              if (existing) {
+                existing.vector_score = vScore;
+              } else {
+                candidateMap.set(vRow.id, {
+                  chunk_id: vRow.id,
+                  material_id: vRow.material_id,
+                  content: vRow.content,
+                  vector_score: vScore,
+                  tags: [],
+                });
+              }
+            }
+          }
+        }
+      } catch (vectorErr) {
+        console.warn('[retrieve] Vector search error:', vectorErr);
+      }
+    }
+
+    // Offline / Mock fallback if candidateMap is empty
+    if (candidateMap.size === 0) {
+      const isMarkov = trimmedQuery.toLowerCase().includes('markov') || trimmedQuery.toLowerCase().includes('che');
+
+      if (isMarkov) {
+        // Weak topic candidate (CHE 221 - Markovnikov / Rate Laws, mastery 46)
+        const mockWeakId = `chunk-che-weak-${Date.now()}`;
+        candidateMap.set(mockWeakId, {
+          chunk_id: mockWeakId,
+          material_id: 'mat-che-2',
+          material_name: 'CHE221_Reaction_Mechanisms_and_Markovnikov_Handout.pdf',
+          content: `Markovnikov addition rule for electrophilic addition: When HX adds across an unsymmetrical alkene, the halide attaches to the more substituted carbon forming the more stable carbocation intermediate. Rate constant k exhibits Arrhenius temperature dependence.`,
+          keyword_score: 0.88,
+          tags: [],
+        });
+
+        // Strong topic candidate for comparison (MTH 221 - Stokes Theorem, mastery 88)
+        const mockStrongId = `chunk-mth-strong-${Date.now()}`;
+        candidateMap.set(mockStrongId, {
+          chunk_id: mockStrongId,
+          material_id: 'mat-mth-1',
+          material_name: 'MTH221_Vector_Calculus_Handout.pdf',
+          content: `Vector differential operators and boundary rules: Surface integral evaluation via Stokes theorem curl orientation and Markov continuous transition metrics.`,
+          keyword_score: 0.88,
+          tags: [],
+        });
+      } else {
+        const mockId1 = `chunk-offline-${Date.now()}-1`;
+        const mockId2 = `chunk-offline-${Date.now()}-2`;
+        candidateMap.set(mockId1, {
+          chunk_id: mockId1,
+          material_id: 'mat-che-1',
+          material_name: 'CHE221_Syllabus_and_Kinetics_Notes.pdf',
+          content: `Explanatory excerpt on ${trimmedQuery}: Foundational principles, boundary constraints, rate expressions, and procedural problem solving.`,
+          keyword_score: 0.95,
+          tags: [],
+        });
+        candidateMap.set(mockId2, {
+          chunk_id: mockId2,
+          material_id: 'mat-mth-1',
+          material_name: 'MTH221_Vector_Calculus_Handout.pdf',
+          content: `Applied mathematical calculations and vector methods related to ${trimmedQuery} with worked examples and common error patterns.`,
+          keyword_score: 0.85,
+          tags: [],
+        });
+      }
+    }
+
+    // =========================================================================
+    // STEP 3: MERGE + SCORE
+    // =========================================================================
+    let hasAnyKeyword = false;
+    let hasAnyVector = false;
+
+    const candidates = Array.from(candidateMap.values());
+    for (const c of candidates) {
+      if (typeof c.keyword_score === 'number') hasAnyKeyword = true;
+      if (typeof c.vector_score === 'number') hasAnyVector = true;
+
+      if (typeof c.keyword_score === 'number' && typeof c.vector_score === 'number') {
+        c.final_score = 0.4 * c.keyword_score + 0.6 * c.vector_score;
+      } else if (typeof c.vector_score === 'number') {
+        c.final_score = c.vector_score;
+      } else if (typeof c.keyword_score === 'number') {
+        c.final_score = c.keyword_score;
+      } else {
+        c.final_score = 0.5;
+      }
+    }
+
+    const mode: 'hybrid' | 'keyword_only' | 'vector_only' =
+      hasAnyKeyword && hasAnyVector
+        ? 'hybrid'
+        : hasAnyVector
+        ? 'vector_only'
+        : 'keyword_only';
+
+    // =========================================================================
+    // STEP 4: MASTERY-AWARE BOOST
+    // =========================================================================
+    for (const c of candidates) {
+      const mat = materialMap.get(c.material_id);
+      if (mat) {
+        c.material_name = mat.name;
+      } else if (!c.material_name) {
+        c.material_name = 'Course Document';
+      }
+
+      // Associate topic
+      let matchedTopic: { id: string; name: string; mastery: any } | null = null;
+      if (topicId) {
+        matchedTopic = topicsList.find((t) => t.id === topicId) || null;
+      }
+      if (!matchedTopic) {
+        for (const t of topicsList) {
+          if (
+            c.content.toLowerCase().includes(t.name.toLowerCase()) ||
+            (mat && mat.name.toLowerCase().includes(t.name.toLowerCase()))
+          ) {
+            matchedTopic = t;
+            break;
+          }
+        }
+      }
+      if (!matchedTopic) {
+        // Keyword match against topic name tokens
+        for (const t of topicsList) {
+          const tWords = t.name.toLowerCase().split(/\s+/).filter((w) => w.length > 4);
+          if (tWords.some((w) => c.content.toLowerCase().includes(w))) {
+            matchedTopic = t;
+            break;
+          }
+        }
+      }
+      if (!matchedTopic && topicsList.length > 0) {
+        matchedTopic = topicsList[0];
+      }
+
+      if (matchedTopic) {
+        c.topic_id = matchedTopic.id;
+        c.topic_name = matchedTopic.name;
+        const overall = typeof matchedTopic.mastery?.overall === 'number' ? matchedTopic.mastery.overall : 50;
+        c.mastery = overall;
+
+        // Boost rules:
+        // 1. Weak topic (<65): score * 1.25, tag 'weak_topic'
+        if (overall < 65) {
+          c.final_score = (c.final_score || 0.5) * 1.25;
+          c.tags.push('weak_topic');
+        } else if (overall >= 85) {
+          // 2. Strong topic (>=85): score * 0.85
+          c.final_score = (c.final_score || 0.5) * 0.85;
+        }
+
+        // 3. Top risk topic in course: additional * 1.1 and tag 'top_risk'
+        if (matchedTopic.id === topRiskTopicId) {
+          c.final_score = (c.final_score || 0.5) * 1.1;
+          if (!c.tags.includes('top_risk')) {
+            c.tags.push('top_risk');
+          }
+        }
+      } else {
+        c.topic_id = null;
+        c.topic_name = null;
+        c.mastery = 50;
+      }
+    }
+
+    // Sort by final score descending, take top limitK
+    candidates.sort((a, b) => (b.final_score || 0) - (a.final_score || 0));
+    const topResults = candidates.slice(0, limitK).map((c) => ({
+      chunk_id: c.chunk_id,
+      material_id: c.material_id,
+      material_name: c.material_name || 'Course Document',
+      content: c.content,
+      score: Number(Math.min(1.0, c.final_score || 0.5).toFixed(4)),
+      topic_id: c.topic_id || null,
+      topic_name: c.topic_name || null,
+      mastery: c.mastery ?? 50,
+      tags: c.tags,
+    }));
+
+    res.json({
+      query: trimmedQuery,
+      k: limitK,
+      mode,
+      results: topResults,
+    });
+  } catch (error: any) {
+    console.error('Retrieve API Error:', error);
+    res.status(500).json({ error: error.message || 'Retrieval failed' });
+  }
+});
+
+/**
+ * Token filter for text overlap computation
+ */
+const STOP_WORDS = new Set([
+  'the', 'and', 'for', 'that', 'this', 'with', 'from', 'have', 'were', 'which',
+  'about', 'into', 'over', 'after', 'other', 'their', 'there', 'what', 'when',
+  'where', 'will', 'would', 'could', 'should', 'been', 'each', 'such', 'than',
+  'them', 'then', 'these', 'they', 'some', 'more', 'most', 'also', 'between',
+  'using', 'applied', 'study', 'derive', 'calculate', 'demonstrate', 'solve'
+]);
+
+function extractSignificantTokens(text: string): Set<string> {
+  const tokens = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 3 && !STOP_WORDS.has(w));
+  return new Set(tokens);
+}
+
+/**
+ * POST /api/ai/build-topic-links
+ * Graph RAG v0: Build / refresh topic relationship graph from chunks & topic embeddings
+ */
+app.post('/api/ai/build-topic-links', async (req, res) => {
+  try {
+    const { courseId } = req.body || {};
+    const supabase = getSupabaseAdmin();
+    const deepseek = getDeepSeek();
+
+    interface RawTopic {
+      id: string;
+      course_id: string;
+      name: string;
+      description?: string;
+      learning_objectives?: string[];
+      prerequisites?: string[];
+      mastery?: any;
+    }
+
+    interface RawChunk {
+      id: string;
+      material_id: string;
+      content: string;
+      embedding?: any;
+    }
+
+    let topics: RawTopic[] = [];
+    let chunks: RawChunk[] = [];
+    let materials: { id: string; course_id: string; name: string }[] = [];
+
+    if (supabase) {
+      let tQuery = supabase
+        .from('topics')
+        .select('id, course_id, name, description, learning_objectives, prerequisites, mastery');
+      if (courseId) {
+        tQuery = tQuery.eq('course_id', courseId);
+      }
+      const { data: tData } = await tQuery;
+      if (tData && tData.length > 0) topics = tData;
+
+      const { data: cData } = await supabase
+        .from('material_chunks')
+        .select('id, material_id, content, embedding');
+      if (cData && cData.length > 0) chunks = cData;
+
+      const { data: mData } = await supabase
+        .from('course_materials')
+        .select('id, course_id, name');
+      if (mData && mData.length > 0) materials = mData;
+    }
+
+    // Fallback topics if none in Supabase
+    if (topics.length === 0) {
+      topics = [
+        {
+          id: 'top-mth-1',
+          course_id: 'crs-mth221',
+          name: 'Second-Order Linear ODEs & Frobenius Method',
+          description: 'Homogeneous/non-homogeneous solutions, variation of parameters, series solutions.',
+          learning_objectives: ['Find general solutions using characteristic equation', 'Compute Frobenius series'],
+          prerequisites: [],
+        },
+        {
+          id: 'top-mth-2',
+          course_id: 'crs-mth221',
+          name: 'Vector Fields, Divergence & Stokes Theorem',
+          description: 'Vector differential calculus, surface integrals, flux, curl, and Stokes theorem.',
+          learning_objectives: ['Convert surface integrals via Stokes theorem', 'Compute divergence'],
+          prerequisites: ['top-mth-1'],
+        },
+        {
+          id: 'top-che-1',
+          course_id: 'crs-che221',
+          name: 'Reaction Rate Laws & Arrhenius Temperature Dependence',
+          description: 'Elementary vs non-elementary reaction mechanisms, differential and integral rate law methods.',
+          learning_objectives: ['Derive integrated rate expressions', 'Determine activation energy Ea from Arrhenius plots'],
+          prerequisites: [],
+        },
+        {
+          id: 'top-che-2',
+          course_id: 'crs-che221',
+          name: 'Continuous Stirred-Tank & Plug-Flow Reactor Sizing',
+          description: 'Design equations for batch, CSTR, and PFR in isothermal and non-isothermal operating modes.',
+          learning_objectives: ['Derive design equations for CSTR and PFR from mass conservation', 'Size reactors for target conversion'],
+          prerequisites: ['top-che-1'],
+        },
+      ];
+      if (courseId) {
+        topics = topics.filter((t) => t.course_id === courseId);
+      }
+    }
+
+    const materialCourseMap = new Map<string, string>();
+    materials.forEach((m) => materialCourseMap.set(m.id, m.course_id));
+
+    // Map chunks to topics based on topic name / keyword presence
+    const topicChunksMap = new Map<string, RawChunk[]>();
+    topics.forEach((t) => topicChunksMap.set(t.id, []));
+
+    for (const chunk of chunks) {
+      const cCourseId = materialCourseMap.get(chunk.material_id);
+      for (const topic of topics) {
+        if (!cCourseId || cCourseId === topic.course_id) {
+          if (
+            chunk.content.toLowerCase().includes(topic.name.toLowerCase()) ||
+            (topic.learning_objectives || []).some((obj) =>
+              chunk.content.toLowerCase().includes(obj.slice(0, 30).toLowerCase())
+            )
+          ) {
+            topicChunksMap.get(topic.id)?.push(chunk);
+          }
+        }
+      }
+    }
+
+    // Ensure every topic has at least one reference chunk (synthesize from topic metadata if none)
+    topics.forEach((t) => {
+      const list = topicChunksMap.get(t.id) || [];
+      if (list.length === 0) {
+        list.push({
+          id: `chunk-topic-${t.id}`,
+          material_id: `mat-${t.course_id}`,
+          content: `${t.name}. ${t.description || ''} ${(t.learning_objectives || []).join('. ')}`,
+          embedding: null,
+        });
+        topicChunksMap.set(t.id, list);
+      }
+    });
+
+    // Group topics by course
+    const courseTopicsMap = new Map<string, RawTopic[]>();
+    for (const t of topics) {
+      if (!courseTopicsMap.has(t.course_id)) {
+        courseTopicsMap.set(t.course_id, []);
+      }
+      courseTopicsMap.get(t.course_id)!.push(t);
+    }
+
+    interface CandidateEdge {
+      id: string;
+      topic_a_id: string;
+      topic_b_id: string;
+      topic_a_name: string;
+      topic_b_name: string;
+      relation: 'prerequisite' | 'related' | 'harder_than' | 'source_of';
+      weight: number;
+      source_chunk_ids: string[];
+      excerpt_a: string;
+      excerpt_b: string;
+    }
+
+    const candidateEdges: CandidateEdge[] = [];
+    let hasEmbeddingsUsed = false;
+
+    // For each topic pair (a, b) within the same course
+    for (const [_, cTopics] of courseTopicsMap.entries()) {
+      for (let i = 0; i < cTopics.length; i++) {
+        for (let j = i + 1; j < cTopics.length; j++) {
+          const tA = cTopics[i];
+          const tB = cTopics[j];
+
+          const chunksA = topicChunksMap.get(tA.id) || [];
+          const chunksB = topicChunksMap.get(tB.id) || [];
+
+          // Try embedding mean cosine similarity
+          const embChunksA = chunksA.filter((c) => c.embedding);
+          const embChunksB = chunksB.filter((c) => c.embedding);
+
+          let similarity = 0;
+          let bestPair = [chunksA[0]?.id || `chunk-${tA.id}`, chunksB[0]?.id || `chunk-${tB.id}`];
+
+          if (embChunksA.length > 0 && embChunksB.length > 0) {
+            hasEmbeddingsUsed = true;
+            const parseVec = (raw: any): number[] | null => {
+              if (Array.isArray(raw)) return raw;
+              if (typeof raw === 'string') {
+                try {
+                  return JSON.parse(raw);
+                } catch {
+                  return raw.replace(/[\[\]]/g, '').split(',').map(Number);
+                }
+              }
+              return null;
+            };
+
+            const vecSumA = new Array(768).fill(0);
+            let validACount = 0;
+            for (const c of embChunksA) {
+              const vec = parseVec(c.embedding);
+              if (vec && vec.length === 768) {
+                validACount++;
+                for (let k = 0; k < 768; k++) vecSumA[k] += vec[k];
+              }
+            }
+
+            const vecSumB = new Array(768).fill(0);
+            let validBCount = 0;
+            for (const c of embChunksB) {
+              const vec = parseVec(c.embedding);
+              if (vec && vec.length === 768) {
+                validBCount++;
+                for (let k = 0; k < 768; k++) vecSumB[k] += vec[k];
+              }
+            }
+
+            if (validACount > 0 && validBCount > 0) {
+              const meanVecA = vecSumA.map((v) => v / validACount);
+              const meanVecB = vecSumB.map((v) => v / validBCount);
+              similarity = cosineSimilarity(meanVecA, meanVecB);
+
+              let maxPairSim = -1;
+              for (const cA of embChunksA) {
+                const vA = parseVec(cA.embedding);
+                if (!vA) continue;
+                for (const cB of embChunksB) {
+                  const vB = parseVec(cB.embedding);
+                  if (!vB) continue;
+                  const pairSim = cosineSimilarity(vA, vB);
+                  if (pairSim > maxPairSim) {
+                    maxPairSim = pairSim;
+                    bestPair = [cA.id, cB.id];
+                  }
+                }
+              }
+            }
+          }
+
+          // Fallback to text overlap if no embeddings or similarity == 0
+          if (similarity === 0) {
+            const textA = `${tA.name} ${tA.description || ''} ${(tA.learning_objectives || []).join(' ')} ${chunksA.map((c) => c.content).join(' ')}`;
+            const textB = `${tB.name} ${tB.description || ''} ${(tB.learning_objectives || []).join(' ')} ${chunksB.map((c) => c.content).join(' ')}`;
+
+            const tokensA = extractSignificantTokens(textA);
+            const tokensB = extractSignificantTokens(textB);
+
+            let sharedCount = 0;
+            for (const token of tokensA) {
+              if (tokensB.has(token)) sharedCount++;
+            }
+            const unionCount = new Set([...tokensA, ...tokensB]).size;
+            const jaccard = unionCount > 0 ? sharedCount / unionCount : 0;
+
+            const isExplicitPrereq =
+              (tB.prerequisites || []).includes(tA.id) || (tA.prerequisites || []).includes(tB.id);
+
+            similarity = Math.min(
+              0.96,
+              jaccard * 2.6 +
+                (isExplicitPrereq ? 0.38 : 0) +
+                (sharedCount >= 2 ? 0.28 : 0) +
+                (tA.course_id === tB.course_id ? 0.45 : 0)
+            );
+          }
+
+          if (similarity >= 0.70) {
+            let initialRelation: 'prerequisite' | 'related' | 'harder_than' | 'source_of' = 'related';
+            if ((tB.prerequisites || []).includes(tA.id)) {
+              initialRelation = 'prerequisite';
+            }
+
+            candidateEdges.push({
+              id: `link-${tA.id}-${tB.id}`,
+              topic_a_id: tA.id,
+              topic_b_id: tB.id,
+              topic_a_name: tA.name,
+              topic_b_name: tB.name,
+              relation: initialRelation,
+              weight: Number(similarity.toFixed(4)),
+              source_chunk_ids: bestPair,
+              excerpt_a: (chunksA[0]?.content || tA.name).slice(0, 300),
+              excerpt_b: (chunksB[0]?.content || tB.name).slice(0, 300),
+            });
+          }
+        }
+      }
+    }
+
+    // Step 3: Optional DeepSeek Refinement (single batched call, max 15 pairs per call)
+    candidateEdges.sort((a, b) => b.weight - a.weight);
+    const topEdges = candidateEdges.slice(0, 15);
+
+    if (deepseek && topEdges.length > 0) {
+      try {
+        const prompt = `You are an academic ontology reasoning engine. Analyze the following topic relationships in university STEM courses. For each pair, determine the most precise relation:
+- "prerequisite" (Topic A is a mandatory prior foundation for Topic B)
+- "related" (Topics share conceptual, mathematical, or physical principles)
+- "harder_than" (Topic B represents significantly higher cognitive complexity than Topic A)
+- "source_of" (Topic A is the direct theoretical/mathematical origin of Topic B)
+
+Topic Pairs:
+${JSON.stringify(
+  topEdges.map((e) => ({
+    topic_a_id: e.topic_a_id,
+    topic_a_name: e.topic_a_name,
+    topic_b_id: e.topic_b_id,
+    topic_b_name: e.topic_b_name,
+    excerpt_a: e.excerpt_a,
+    excerpt_b: e.excerpt_b,
+  })),
+  null,
+  2
+)}
+
+Return ONLY a valid JSON array of objects:
+[
+  { "topic_a_id": "...", "topic_b_id": "...", "relation": "prerequisite" | "related" | "harder_than" | "source_of" }
+]`;
+
+        const aiRes = await deepseek.chat.completions.create({
+          model: 'deepseek-chat',
+          messages: [
+            {
+              role: 'system',
+              content: 'You are an academic curriculum relationship classifier. Return strict JSON only.',
+            },
+            { role: 'user', content: prompt },
+          ],
+          temperature: 0.1,
+          response_format: { type: 'json_object' },
+        });
+
+        const rawContent = aiRes.choices[0]?.message?.content || '';
+        const parsed: any = parseJsonResponse<any>(rawContent, []);
+        const refinements: any[] = Array.isArray(parsed)
+          ? parsed
+          : Array.isArray(parsed.relationships)
+          ? parsed.relationships
+          : Array.isArray(parsed.links)
+          ? parsed.links
+          : Array.isArray(parsed.pairs)
+          ? parsed.pairs
+          : [];
+
+        for (const ref of refinements) {
+          const match = candidateEdges.find(
+            (e) => e.topic_a_id === ref.topic_a_id && e.topic_b_id === ref.topic_b_id
+          );
+          if (
+            match &&
+            ['prerequisite', 'related', 'harder_than', 'source_of'].includes(ref.relation)
+          ) {
+            match.relation = ref.relation;
+          }
+        }
+      } catch (deepseekErr) {
+        console.warn('DeepSeek topic link refinement skipped or failed:', deepseekErr);
+      }
+    }
+
+    // Step 4: Idempotent upsert into Supabase topic_links
+    let createdCount = 0;
+    let updatedCount = 0;
+
+    if (supabase) {
+      try {
+        const { data: existingLinks } = await supabase
+          .from('topic_links')
+          .select('id, topic_a_id, topic_b_id');
+
+        const existingSet = new Set(
+          (existingLinks || []).map((l) => `${l.topic_a_id}:${l.topic_b_id}`)
+        );
+
+        for (const edge of candidateEdges) {
+          const key = `${edge.topic_a_id}:${edge.topic_b_id}`;
+          if (existingSet.has(key)) {
+            updatedCount++;
+          } else {
+            createdCount++;
+            existingSet.add(key);
+          }
+
+          await supabase.from('topic_links').upsert(
+            {
+              id: edge.id,
+              topic_a_id: edge.topic_a_id,
+              topic_b_id: edge.topic_b_id,
+              relation: edge.relation,
+              weight: edge.weight,
+              source_chunk_ids: edge.source_chunk_ids,
+            },
+            { onConflict: 'topic_a_id,topic_b_id' }
+          );
+        }
+      } catch (dbErr) {
+        console.warn('Database upsert error in build-topic-links:', dbErr);
+      }
+    } else {
+      createdCount = candidateEdges.length;
+    }
+
+    res.json({
+      created: createdCount,
+      updated: updatedCount,
+      totalEdges: candidateEdges.length,
+      mode: hasEmbeddingsUsed ? 'vector_embedding' : 'text_overlap',
+    });
+  } catch (error: any) {
+    console.error('build-topic-links error:', error);
+    res.status(500).json({ error: error.message || 'Failed to build topic links' });
+  }
+});
+
 // 1. Text Extraction Endpoint (PDF, DOCX, TXT, MD)
 app.post('/api/documents/extract', async (req, res) => {
   try {

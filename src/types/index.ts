@@ -297,3 +297,32 @@ export type AppTab =
   | 'assessments'
   | 'debt'
   | 'analytics';
+
+export interface RetrievalResultItem {
+  chunk_id: string;
+  material_id: string;
+  material_name: string;
+  content: string;
+  score: number;
+  topic_id: string | null;
+  topic_name: string | null;
+  mastery: number;
+  tags: ('weak_topic' | 'top_risk' | string)[];
+}
+
+export interface RetrievalResponse {
+  query: string;
+  k: number;
+  mode: 'hybrid' | 'keyword_only' | 'vector_only';
+  results: RetrievalResultItem[];
+}
+
+export interface RetrievalHealth {
+  status: 'ok' | 'error';
+  vectorChunks: number;
+  keywordChunks: number;
+  hasEmbeddings: boolean;
+  geminiConfigured: boolean;
+  error?: string;
+}
+

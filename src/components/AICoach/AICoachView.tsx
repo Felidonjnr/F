@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   AlertOctagon,
   AlertTriangle,
@@ -6,6 +6,7 @@ import {
   Brain,
   CheckCircle2,
   ChevronRight,
+  Database,
   Flame,
   GraduationCap,
   Loader2,
@@ -17,6 +18,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { StateManager } from '../../services/storage';
+import { RetrievalHealth } from '../../types';
 
 interface Message {
   id: string;
@@ -33,6 +35,7 @@ export const AICoachView: React.FC = () => {
 
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [retrievalHealth, setRetrievalHealth] = useState<RetrievalHealth | null>(null);
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 'msg-1',
@@ -41,6 +44,13 @@ export const AICoachView: React.FC = () => {
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     },
   ]);
+
+  useEffect(() => {
+    fetch('/api/ai/retrieve/health')
+      .then((res) => res.json())
+      .then((data) => setRetrievalHealth(data))
+      .catch((err) => console.warn('Failed to fetch retrieval health:', err));
+  }, []);
 
   const activeDebts = state.debts.filter((d) => d.status !== 'resolved');
   const weakTopics = context.weak_topics;
@@ -112,6 +122,21 @@ export const AICoachView: React.FC = () => {
           <p className="text-xs text-slate-500">
             Real-time, syllabus-grounded academic diagnosis, remediation strategies, and first-principles Socratic tutoring.
           </p>
+          {retrievalHealth && (
+            <div className="mt-2 inline-flex items-center space-x-1.5 text-[11px] font-mono text-slate-500 bg-slate-100/80 border border-slate-200/80 px-2.5 py-0.5 rounded-md">
+              <Database className="w-3 h-3 text-slate-400 shrink-0" />
+              <span>
+                Indexed: <strong className="text-slate-700 font-semibold">{retrievalHealth.keywordChunks}</strong> chunks | Embeddings:{' '}
+                <strong className={retrievalHealth.hasEmbeddings ? 'text-emerald-600 font-semibold' : 'text-slate-600 font-semibold'}>
+                  {retrievalHealth.hasEmbeddings ? 'on' : 'off'}
+                </strong>{' '}
+                | Gemini key:{' '}
+                <strong className={retrievalHealth.geminiConfigured ? 'text-emerald-600 font-semibold' : 'text-amber-600 font-semibold'}>
+                  {retrievalHealth.geminiConfigured ? 'configured' : 'missing'}
+                </strong>
+              </span>
+            </div>
+          )}
         </div>
 
         <div className="flex items-center space-x-3 px-3 py-1.5 bg-slate-900 rounded-xl text-xs font-mono font-bold text-amber-300">

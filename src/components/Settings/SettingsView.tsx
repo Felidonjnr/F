@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
+  Database,
   GraduationCap,
   LogOut,
   RotateCcw,
@@ -11,7 +12,7 @@ import {
   Sparkles,
   User,
 } from 'lucide-react';
-import { StudentProfile } from '../../types';
+import { RetrievalHealth, StudentProfile } from '../../types';
 import { getSupabaseClient } from '../../services/supabase';
 import { Badge, Button, Card, Dialog } from '../ui';
 
@@ -39,6 +40,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [retrievalHealth, setRetrievalHealth] = useState<RetrievalHealth | null>(null);
+
+  useEffect(() => {
+    fetch('/api/ai/retrieve/health')
+      .then((r) => r.json())
+      .then((d) => setRetrievalHealth(d))
+      .catch(() => {});
+  }, []);
 
   const handleSignOut = async () => {
     setSigningOut(true);
@@ -92,6 +101,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <p className="text-xs text-slate-500 mt-0.5">
             Configure target CGPA goals, weekly study hour commitments, and accountability strictness.
           </p>
+          {retrievalHealth && (
+            <div className="mt-2 inline-flex items-center space-x-1.5 text-[11px] font-mono text-slate-500 bg-slate-100/80 border border-slate-200/80 px-2.5 py-0.5 rounded-md">
+              <Database className="w-3 h-3 text-slate-400 shrink-0" />
+              <span>
+                Indexed: <strong className="text-slate-700 font-semibold">{retrievalHealth.keywordChunks}</strong> chunks | Embeddings:{' '}
+                <strong className={retrievalHealth.hasEmbeddings ? 'text-emerald-600 font-semibold' : 'text-slate-600 font-semibold'}>
+                  {retrievalHealth.hasEmbeddings ? 'on' : 'off'}
+                </strong>{' '}
+                | Gemini key:{' '}
+                <strong className={retrievalHealth.geminiConfigured ? 'text-emerald-600 font-semibold' : 'text-amber-600 font-semibold'}>
+                  {retrievalHealth.geminiConfigured ? 'configured' : 'missing'}
+                </strong>
+              </span>
+            </div>
+          )}
         </div>
       </Card>
 
