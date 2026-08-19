@@ -3,6 +3,7 @@ import { AICoachView } from './components/AICoach/AICoachView';
 import { AnalyticsView } from './components/Analytics/AnalyticsView';
 import { AssessmentRunnerModal } from './components/Assessments/AssessmentRunnerModal';
 import { AssessmentsView } from './components/Assessments/AssessmentsView';
+import { SignInView } from './components/Auth/SignInView';
 import { CourseDetailModal } from './components/Courses/CourseDetailModal';
 import { CoursesView } from './components/Courses/CoursesView';
 import { MaterialUploadModal } from './components/Courses/MaterialUploadModal';
@@ -16,6 +17,7 @@ import { SettingsView } from './components/Settings/SettingsView';
 import { ActiveSessionModal } from './components/Study/ActiveSessionModal';
 import { StudyView } from './components/Study/StudyView';
 import { AppState, StateManager } from './services/storage';
+import { getSupabaseClient, isSupabaseConfigured } from './services/supabase';
 import {
   AcademicDebt,
   AppTab,
@@ -29,6 +31,9 @@ export default function App() {
   const stateManager = StateManager.getInstance();
   const [state, setState] = useState<AppState>(stateManager.getState());
   const [currentTab, setCurrentTab] = useState<AppTab>('dashboard');
+  const [session, setSession] = useState<any>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [offlineMode, setOfflineMode] = useState(false);
 
   // Modals state
   const [selectedCourseForDetail, setSelectedCourseForDetail] = useState<Course | null>(null);
@@ -46,6 +51,33 @@ export default function App() {
     topic: null,
   });
 
+  // Supabase Auth Listener
+  useEffect(() => {
+    const client = getSupabaseClient();
+    if (!client || !isSupabaseConfigured) {
+      setAuthLoading(false);
+      return;
+    }
+
+    // Get current active session
+    client.auth.getSession().then(({ data: { session: currentSession } }) => {
+      setSession(currentSession);
+      setAuthLoading(false);
+    });
+
+    // Subscribe to auth state transitions
+    const {
+      data: { subscription },
+    } = client.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+      setAuthLoading(false);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
   // Subscribe to storage updates
   useEffect(() => {
     const unsubscribe = stateManager.subscribe((newState) => {
@@ -53,6 +85,28 @@ export default function App() {
     });
     return () => unsubscribe();
   }, []);
+
+  // Show Auth Loading Spinner
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-400">
+        <div className="w-8 h-8 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mb-3" />
+        <span className="text-xs font-semibold tracking-wider uppercase text-slate-500">
+          Loading FirstClass OS...
+        </span>
+      </div>
+    );
+  }
+
+  // Auth Wall: If Supabase is configured, not in offline mode, and no active session exists
+  if (isSupabaseConfigured && !session && !offlineMode) {
+    return (
+      <SignInView
+        onSuccess={() => {}}
+        onContinueOffline={() => setOfflineMode(true)}
+      />
+    );
+  }
 
   const pressure = stateManager.getPressureBreakdown();
   const academicHealth = stateManager.getAcademicHealth();
@@ -190,6 +244,10 @@ export default function App() {
             profile={state.profile}
             onUpdateProfile={(u) => stateManager.updateProfile(u)}
             onResetFactorySeed={() => stateManager.resetToFactorySeed()}
+            onSignOut={() => {
+              setSession(null);
+              setOfflineMode(false);
+            }}
           />
         )}
       </main>
@@ -280,3 +338,4 @@ export default function App() {
     </div>
   );
 }
+

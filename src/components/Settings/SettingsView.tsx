@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   GraduationCap,
+  LogOut,
   RotateCcw,
   Save,
   Settings,
@@ -11,17 +12,20 @@ import {
   User,
 } from 'lucide-react';
 import { StudentProfile } from '../../types';
+import { getSupabaseClient } from '../../services/supabase';
 
 interface SettingsViewProps {
   profile: StudentProfile;
   onUpdateProfile: (updated: Partial<StudentProfile>) => void;
   onResetFactorySeed: () => void;
+  onSignOut?: () => void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   profile,
   onUpdateProfile,
   onResetFactorySeed,
+  onSignOut,
 }) => {
   const [name, setName] = useState(profile.name);
   const [institution, setInstitution] = useState(profile.institution);
@@ -32,6 +36,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [weeklyMinutes, setWeeklyMinutes] = useState(profile.weekly_available_minutes);
   const [accountabilityLevel, setAccountabilityLevel] = useState(profile.accountability_level);
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+
+  const handleSignOut = async () => {
+    setSigningOut(true);
+    try {
+      const client = getSupabaseClient();
+      if (client) {
+        await client.auth.signOut();
+      }
+      if (onSignOut) {
+        onSignOut();
+      }
+    } catch (e) {
+      console.error('Sign out error:', e);
+    } finally {
+      setSigningOut(false);
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -224,24 +246,38 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         </div>
 
-        {/* Submit */}
-        <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
-          <button
-            type="button"
-            onClick={() => {
-              if (confirm('Reset entire system to factory sample dataset? This cannot be undone.')) {
-                onResetFactorySeed();
-              }
-            }}
-            className="flex items-center space-x-1.5 text-xs text-rose-600 hover:text-rose-700 font-bold"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>Reset to Factory Seed Data</span>
-          </button>
+        {/* Submit & Session Controls */}
+        <div className="pt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center space-x-4">
+            <button
+              type="button"
+              onClick={() => {
+                if (confirm('Reset entire system to factory sample dataset? This cannot be undone.')) {
+                  onResetFactorySeed();
+                }
+              }}
+              className="flex items-center space-x-1.5 text-xs text-rose-600 hover:text-rose-700 font-bold cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reset to Factory Seed</span>
+            </button>
+
+            <span className="text-slate-300">|</span>
+
+            <button
+              type="button"
+              onClick={handleSignOut}
+              disabled={signingOut}
+              className="flex items-center space-x-1.5 text-xs text-slate-600 hover:text-slate-900 font-bold transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <LogOut className="w-3.5 h-3.5 text-slate-500" />
+              <span>{signingOut ? 'Signing Out...' : 'Sign Out of FirstClass OS'}</span>
+            </button>
+          </div>
 
           <button
             type="submit"
-            className="flex items-center space-x-2 px-6 py-2.5 text-xs font-bold bg-slate-900 hover:bg-slate-800 text-amber-300 rounded-xl shadow-xs transition-all active:scale-95"
+            className="flex items-center space-x-2 px-6 py-2.5 text-xs font-bold bg-slate-900 hover:bg-slate-800 text-amber-300 rounded-xl shadow-xs transition-all active:scale-95 cursor-pointer"
           >
             <Save className="w-4 h-4" />
             <span>Save Preferences</span>
