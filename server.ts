@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'path';
 import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
-import { GoogleGenAI } from '@google/genai';
+import OpenAI from 'openai';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 dotenv.config();
@@ -30,23 +30,19 @@ export function getSupabaseAdmin(): SupabaseClient | null {
   return supabaseAdmin;
 }
 
-// Lazy/safe initialization for Gemini API client
-let genAI: GoogleGenAI | null = null;
-function getGenAI(): GoogleGenAI | null {
-  if (!genAI) {
-    const apiKey = process.env.GEMINI_API_KEY;
+// Lazy/safe initialization for DeepSeek API client (OpenAI-compatible)
+let deepseekClient: OpenAI | null = null;
+function getDeepSeek(): OpenAI | null {
+  if (!deepseekClient) {
+    const apiKey = process.env.DEEPSEEK_API_KEY;
     if (apiKey) {
-      genAI = new GoogleGenAI({
+      deepseekClient = new OpenAI({
         apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          },
-        },
+        baseURL: 'https://api.deepseek.com',
       });
     }
   }
-  return genAI;
+  return deepseekClient;
 }
 
 // Health check
@@ -54,15 +50,26 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// AI Coach Chat Endpoint
+// Helper to strip markdown JSON code fences
+function parseJsonResponse<T>(raw: string, fallback: T): T {
+  try {
+    const clean = raw.replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/```$/, '').trim();
+    return JSON.parse(clean);
+  } catch (err) {
+    console.error('Failed to parse JSON response:', raw, err);
+    return fallback;
+  }
+}
+
+// AI Coach Chat Endpoint (DeepSeek API)
 app.post('/api/ai/chat', async (req, res) => {
   try {
     const { messages, studentContext, currentQuery } = req.body;
-    const ai = getGenAI();
+    const ai = getDeepSeek();
 
     if (!ai) {
       return res.status(200).json({
-        response: `[Offline Coach Mode] FirstClass OS is operating locally. Here is a direct academic recommendation based on your current state:\n\n• Current Focus: Review high-priority debt in your active courses.\n• Next Immediate Action: Complete your next 30-minute practice session on Chemical Kinetics.\n\n(Configure GEMINI_API_KEY to activate full real-time neural coaching).`,
+        response: `[Offline Coach Mode] FirstClass OS is operating locally. Here is a direct academic recommendation based on your current state:\n\n• Current Focus: Review high-priority debt in your active courses.\n• Next Immediate Action: Complete your next 30-minute practice session on your highest-risk topics.\n\n(Configure DEEPSEEK_API_KEY to activate full real-time neural coaching).`,
       });
     }
 
@@ -76,30 +83,36 @@ ${JSON.stringify(studentContext, null, 2)}
 
 Respond with structured, crisp advice, tactical study strategies, or conceptual explanations grounded in their active semester coursework.`;
 
-    const chatMessages = (messages || []).map((m: any) => `${m.role === 'user' ? 'Student' : 'Coach'}: ${m.content}`).join('\n');
-    const prompt = `${chatMessages}\nStudent: ${currentQuery || 'What should I do right now?'}\nCoach:`;
+    const chatHistory = (messages || []).map((m: any) => ({
+      role: m.role === 'user' ? ('user' as const) : ('assistant' as const),
+      content: m.content || '',
+    }));
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.7-flash',
-      contents: prompt,
-      config: {
-        systemInstruction,
-        temperature: 0.4,
-      },
+    const formattedMessages: OpenAI.ChatCompletionMessageParam[] = [
+      { role: 'system', content: systemInstruction },
+      ...chatHistory,
+      { role: 'user', content: currentQuery || 'What should I do right now?' },
+    ];
+
+    const response = await ai.chat.completions.create({
+      model: 'deepseek-chat',
+      messages: formattedMessages,
+      temperature: 0.4,
     });
 
-    res.json({ response: response.text || 'No response generated.' });
+    const reply = response.choices[0]?.message?.content || 'No response generated.';
+    res.json({ response: reply });
   } catch (error: any) {
     console.error('AI Chat Error:', error);
     res.status(500).json({ error: error.message || 'Failed to generate coach response' });
   }
 });
 
-// AI Socratic Tutor Endpoint
+// AI Socratic Tutor Endpoint (DeepSeek API)
 app.post('/api/ai/tutor', async (req, res) => {
   try {
     const { topicName, courseCode, learningObjective, question, studentDoubt, contextSource } = req.body;
-    const ai = getGenAI();
+    const ai = getDeepSeek();
 
     if (!ai) {
       return res.status(200).json({
@@ -112,8 +125,8 @@ app.post('/api/ai/tutor', async (req, res) => {
       });
     }
 
-    const prompt = `You are the FirstClass OS AI Socratic STEM Tutor.
-Course: ${courseCode}
+    const systemPrompt = `You are the FirstClass OS AI Socratic STEM Tutor.`;
+    const userPrompt = `Course: ${courseCode}
 Topic: ${topicName}
 Learning Objective: ${learningObjective || 'General mastery'}
 Source Context / Reference: ${contextSource || 'Standard university syllabus'}
@@ -125,15 +138,16 @@ Provide a structured, rigorous, and intuitive explanation. Include:
 3. Common Trap / Pitfall to avoid
 4. 2 Rapid Socratic Check Questions to verify understanding.`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.7-flash',
-      contents: prompt,
-      config: {
-        temperature: 0.3,
-      },
+    const response = await ai.chat.completions.create({
+      model: 'deepseek-chat',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.3,
     });
 
-    res.json({ explanation: response.text });
+    res.json({ explanation: response.choices[0]?.message?.content || '' });
   } catch (error: any) {
     console.error('AI Tutor Error:', error);
     res.status(500).json({ error: error.message || 'Tutor generation failed' });
@@ -144,7 +158,7 @@ Provide a structured, rigorous, and intuitive explanation. Include:
 app.post('/api/ai/map-document', async (req, res) => {
   try {
     const { documentName, documentText, courseCode, courseName } = req.body;
-    const ai = getGenAI();
+    const ai = getDeepSeek();
 
     if (!ai) {
       // Fallback structured extraction
@@ -189,7 +203,7 @@ app.post('/api/ai/map-document', async (req, res) => {
       });
     }
 
-    const prompt = `Analyze this course syllabus / study material for Course: ${courseCode} (${courseName}).
+    const userPrompt = `Analyze this course syllabus / study material for Course: ${courseCode} (${courseName}).
 Document Name: ${documentName}
 Document Content:
 ${(documentText || '').slice(0, 10000)}
@@ -204,19 +218,23 @@ Return a valid JSON array of objects with the following keys for each topic:
 - "learning_objectives": array of 2-4 measurable action verbs (e.g. "Calculate...", "Derive...", "Explain...")
 - "prerequisites_hint": array of prerequisite concept names if any
 
-Return ONLY raw JSON without markdown code fences.`;
+Return ONLY raw JSON array without markdown backticks.`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.7-flash',
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        temperature: 0.2,
-      },
+    const response = await ai.chat.completions.create({
+      model: 'deepseek-chat',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are an expert academic curriculum parser. You must output only valid, parseable JSON arrays.',
+        },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.2,
     });
 
-    const parsed = JSON.parse(response.text || '[]');
-    res.json({ topics: Array.isArray(parsed) ? parsed : parsed.topics || [] });
+    const content = response.choices[0]?.message?.content || '[]';
+    const parsed = parseJsonResponse(content, []);
+    res.json({ topics: Array.isArray(parsed) ? parsed : (parsed as any).topics || [] });
   } catch (error: any) {
     console.error('AI Map Document Error:', error);
     res.status(500).json({ error: error.message || 'Failed to extract topics from document' });
@@ -227,7 +245,7 @@ Return ONLY raw JSON without markdown code fences.`;
 app.post('/api/ai/generate-assessment', async (req, res) => {
   try {
     const { courseCode, topicNames, type, questionCount = 5, difficultyDistribution } = req.body;
-    const ai = getGenAI();
+    const ai = getDeepSeek();
 
     if (!ai) {
       return res.json({
@@ -276,9 +294,9 @@ app.post('/api/ai/generate-assessment', async (req, res) => {
       });
     }
 
-    const prompt = `Generate a high-yield academic assessment for university engineering coursework.
+    const userPrompt = `Generate a high-yield academic assessment for university engineering coursework.
 Course: ${courseCode}
-Target Topics: ${topicNames.join(', ')}
+Target Topics: ${(topicNames || []).join(', ')}
 Assessment Type: ${type || 'Weekly Practice Quiz'}
 Question Count: ${questionCount}
 Difficulty Blueprint: ${JSON.stringify(difficultyDistribution || { easy: '30%', medium: '50%', hard: '20%' })}
@@ -294,30 +312,34 @@ Return a valid JSON array of question objects where each object has:
 - "difficulty": integer from 1 (easy) to 5 (rigorous exam level)
 - "explanation": concise step-by-step proof/explanation of why the answer is correct and why common distractors fail
 
-Return ONLY raw JSON without markdown backticks.`;
+Return ONLY a raw JSON array without markdown backticks.`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.7-flash',
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        temperature: 0.3,
-      },
+    const response = await ai.chat.completions.create({
+      model: 'deepseek-chat',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a university exam generator. Output valid JSON arrays only.',
+        },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.3,
     });
 
-    const parsed = JSON.parse(response.text || '[]');
-    res.json({ questions: Array.isArray(parsed) ? parsed : parsed.questions || [] });
+    const content = response.choices[0]?.message?.content || '[]';
+    const parsed = parseJsonResponse(content, []);
+    res.json({ questions: Array.isArray(parsed) ? parsed : (parsed as any).questions || [] });
   } catch (error: any) {
     console.error('AI Assessment Generation Error:', error);
     res.status(500).json({ error: error.message || 'Failed to generate assessment questions' });
   }
 });
 
-// AI Error Diagnosis & Remediation Generator
+// AI Error Diagnosis & Remediation Generator (DeepSeek API)
 app.post('/api/ai/diagnose-error', async (req, res) => {
   try {
     const { questionPrompt, studentAnswer, correctAnswer, topicName, courseCode } = req.body;
-    const ai = getGenAI();
+    const ai = getDeepSeek();
 
     if (!ai) {
       return res.json({
@@ -328,7 +350,7 @@ app.post('/api/ai/diagnose-error', async (req, res) => {
       });
     }
 
-    const prompt = `Perform an academic error diagnosis on a student's incorrect assessment attempt.
+    const userPrompt = `Perform an academic error diagnosis on a student's incorrect assessment attempt.
 Course: ${courseCode}
 Topic: ${topicName}
 Question: ${questionPrompt}
@@ -342,16 +364,21 @@ Return JSON with:
 - "remediationAction": 1-2 sentence actionable recovery instruction
 - "suggestedRecoveryMinutes": recommended recovery minutes (integer 15 to 45)`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.7-flash',
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        temperature: 0.2,
-      },
+    const response = await ai.chat.completions.create({
+      model: 'deepseek-chat',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are an academic diagnostic evaluator. Output a valid JSON object only.',
+        },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.2,
     });
 
-    res.json(JSON.parse(response.text || '{}'));
+    const content = response.choices[0]?.message?.content || '{}';
+    const parsed = parseJsonResponse(content, {});
+    res.json(parsed);
   } catch (error: any) {
     console.error('AI Error Diagnosis Error:', error);
     res.status(500).json({ error: error.message || 'Error diagnosis failed' });
@@ -380,3 +407,4 @@ async function startServer() {
 }
 
 startServer();
+
