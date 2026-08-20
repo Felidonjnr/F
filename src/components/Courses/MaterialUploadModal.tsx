@@ -34,6 +34,7 @@ export const MaterialUploadModal: React.FC<MaterialUploadModalProps> = ({
   const [materialName, setMaterialName] = useState('');
   const [materialType, setMaterialType] = useState<CourseMaterial['type']>('lecture_notes');
   const [rawText, setRawText] = useState('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileBase64, setFileBase64] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStage, setProcessingStage] = useState<'Extracting' | 'Chunking' | 'Embedding' | 'Done' | ''>('');
@@ -48,6 +49,7 @@ export const MaterialUploadModal: React.FC<MaterialUploadModalProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    setSelectedFile(file);
     setMaterialName(file.name);
     setErrorMsg('');
     setSuccessInfo(null);
@@ -85,7 +87,7 @@ export const MaterialUploadModal: React.FC<MaterialUploadModalProps> = ({
       payloadBase64 = btoa(unescape(encodeURIComponent(rawText)));
     }
 
-    if (!payloadBase64) {
+    if (!payloadBase64 && !selectedFile && !rawText.trim()) {
       setErrorMsg('Please upload a document file (PDF, DOCX, TXT, MD) or enter content.');
       return;
     }
@@ -100,15 +102,59 @@ export const MaterialUploadModal: React.FC<MaterialUploadModalProps> = ({
     const stageTimer2 = setTimeout(() => setProcessingStage('Embedding'), 1100);
 
     try {
+      let storagePath: string | null = null;
+
+      // Part 4: Attempt direct Supabase Storage upload if file is present
+      if (selectedFile) {
+        try {
+          const uploadUrlRes = await fetch('/api/ai/upload-url', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fileName: selectedFile.name,
+              courseId: selectedCourse.id,
+              type: materialType,
+            }),
+          });
+
+          if (uploadUrlRes.ok) {
+            const urlData = await uploadUrlRes.json();
+            if (urlData.uploadUrl && urlData.storagePath) {
+              const putRes = await fetch(urlData.uploadUrl, {
+                method: 'PUT',
+                body: selectedFile,
+                headers: {
+                  'Content-Type': selectedFile.type || 'application/octet-stream',
+                },
+              });
+              if (putRes.ok) {
+                storagePath = urlData.storagePath;
+              }
+            }
+          }
+        } catch (uploadErr) {
+          console.warn('Storage signed upload warning, using payload fallback:', uploadErr);
+        }
+      }
+
+      const requestPayload: any = {
+        name: materialName,
+        type: materialType,
+        courseId: selectedCourse.id,
+      };
+
+      if (storagePath) {
+        requestPayload.storagePath = storagePath;
+      } else if (payloadBase64) {
+        requestPayload.fileBase64 = payloadBase64;
+      } else if (rawText.trim()) {
+        requestPayload.rawText = rawText.trim();
+      }
+
       const res = await fetch('/api/ai/process-document', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: materialName,
-          type: materialType,
-          courseId: selectedCourse.id,
-          fileBase64: payloadBase64,
-        }),
+        body: JSON.stringify(requestPayload),
       });
 
       clearTimeout(stageTimer1);

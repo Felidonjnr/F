@@ -556,6 +556,72 @@ async function generateEmbeddingsBatch(chunks: TextChunk[]): Promise<number[][]>
 // PART 1: POST /api/ai/process-document & GET /api/ai/material/:id
 // ============================================================================
 
+let materialsBucketChecked = false;
+async function ensureMaterialsBucket() {
+  if (materialsBucketChecked) return true;
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return false;
+  try {
+    const { data: buckets } = await supabase.storage.listBuckets();
+    const exists = buckets?.some((b: any) => b.name === 'materials');
+    if (!exists) {
+      await supabase.storage.createBucket('materials', {
+        public: false,
+        fileSizeLimit: 10485760, // 10MB
+      });
+    }
+    materialsBucketChecked = true;
+    return true;
+  } catch (err) {
+    console.warn('ensureMaterialsBucket warning:', err);
+    return false;
+  }
+}
+
+/**
+ * POST /api/ai/upload-url
+ * Generates signed upload URL for direct Supabase Storage upload
+ */
+app.post('/api/ai/upload-url', async (req, res) => {
+  try {
+    const { fileName, courseId = 'general', type = 'lecture_notes' } = req.body;
+    if (!fileName) {
+      return res.status(400).json({ error: 'fileName is required' });
+    }
+
+    await ensureMaterialsBucket();
+    const supabase = getSupabaseAdmin();
+    if (!supabase) {
+      return res.status(503).json({ error: 'Supabase storage is not configured on server' });
+    }
+
+    const safeFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const storagePath = `materials/${courseId}/${Date.now()}-${safeFileName}`;
+
+    const { data, error } = await supabase.storage
+      .from('materials')
+      .createSignedUploadUrl(storagePath);
+
+    if (error || !data?.signedUrl) {
+      return res.json({
+        uploadUrl: `/api/ai/upload?path=${encodeURIComponent(storagePath)}`,
+        storagePath,
+        fileSizeLimit: 4500000,
+      });
+    }
+
+    return res.json({
+      uploadUrl: data.signedUrl,
+      storagePath,
+      token: data.token,
+      fileSizeLimit: 4500000,
+    });
+  } catch (err: any) {
+    console.error('Error creating upload url:', err);
+    res.status(500).json({ error: err.message || 'Failed to create upload url' });
+  }
+});
+
 /**
  * POST /api/ai/process-document
  * Full ingestion pipeline: Extract -> Create Row -> Chunk -> Embed -> Store Chunks -> Label Topics -> Finalize
@@ -583,11 +649,12 @@ app.post('/api/ai/process-document', async (req, res) => {
   console.log(`[process-document] Step 1: Loading buffer & extracting text for "${name}"`);
   if (storagePath && supabase) {
     try {
-      const { data: fileData, error: dlErr } = await supabase.storage
-        .from('course-materials')
-        .download(storagePath);
-      if (!dlErr && fileData) {
-        const arrayBuffer = await fileData.arrayBuffer();
+      let dlRes = await supabase.storage.from('materials').download(storagePath);
+      if (dlRes.error || !dlRes.data) {
+        dlRes = await supabase.storage.from('course-materials').download(storagePath);
+      }
+      if (!dlRes.error && dlRes.data) {
+        const arrayBuffer = await dlRes.data.arrayBuffer();
         buffer = Buffer.from(arrayBuffer);
       }
     } catch (dlCatch) {

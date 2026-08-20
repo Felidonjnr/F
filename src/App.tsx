@@ -11,7 +11,9 @@ import { Navigation } from './components/Navigation';
 import { ReviewMasterView } from './components/Review/ReviewMasterView';
 import { SettingsView } from './components/Settings/SettingsView';
 import { ActiveSessionModal } from './components/Study/ActiveSessionModal';
-import { TodayView } from './components/Today/TodayView';
+import { TodayView } from './components/Dashboard/LegacyTodayView';
+import OnboardingPage from './app/onboarding/page';
+import FullQueueTodayPage from './app/queue/today/page';
 import { AppState, StateManager } from './services/storage';
 import { getSupabaseClient, isSupabaseConfigured } from './services/supabase';
 import {
@@ -27,9 +29,21 @@ export default function App() {
   const stateManager = StateManager.getInstance();
   const [state, setState] = useState<AppState>(stateManager.getState());
   const [currentTab, setCurrentTab] = useState<AppTab>('today');
+  const [currentPath, setCurrentPath] = useState<string>(() =>
+    typeof window !== 'undefined' ? window.location.pathname : '/'
+  );
   const [session, setSession] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [offlineMode, setOfflineMode] = useState(false);
+
+  // Listen to popstate (back/forward navigation)
+  useEffect(() => {
+    const handleLocationChange = () => {
+      setCurrentPath(window.location.pathname);
+    };
+    window.addEventListener('popstate', handleLocationChange);
+    return () => window.removeEventListener('popstate', handleLocationChange);
+  }, []);
 
   // Modals state
   const [selectedCourseForDetail, setSelectedCourseForDetail] = useState<Course | null>(null);
@@ -109,6 +123,15 @@ export default function App() {
   const activeDebtCount = state.debts.filter((d) => d.status !== 'resolved').length;
   const pendingMissionsCount = state.missions.filter((m) => m.status === 'pending').length;
   const readyAssessmentsCount = state.assessments.filter((a) => a.status === 'ready').length;
+
+  // Standalone page routes
+  if (currentPath === '/onboarding') {
+    return <OnboardingPage />;
+  }
+
+  if (currentPath === '/queue/today') {
+    return <FullQueueTodayPage />;
+  }
 
   return (
     <div className="min-h-screen bg-slate-100/70 text-slate-900 flex flex-col font-sans selection:bg-amber-200 selection:text-slate-900">

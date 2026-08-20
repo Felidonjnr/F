@@ -326,3 +326,91 @@ export interface RetrievalHealth {
   error?: string;
 }
 
+export type QueueItemType = 'NEW' | 'REVIEW' | 'PRACTICE' | 'ASSESSMENT';
+export type MasteryTier = 'T0_UNTESTED' | 'T1_FOUNDATIONAL' | 'T2_APPLICATION' | 'T3_SYNTHESIS' | 'T4_INTUITIVE';
+
+export interface QueueItem {
+  id: string;
+  queue_id?: string;
+  unit_id: string;
+  course_id: string;
+  course_code: string;
+  course_color?: string;
+  title: string;
+  type: QueueItemType;
+  estimated_minutes: number;
+  completed: boolean;
+  mastery_tier?: string;
+  is_debt?: boolean;
+  is_weak_spot?: boolean;
+  priority_order: number;
+  order_index?: number;
+  completed_at?: string;
+}
+
+export interface DailyQueue {
+  id: string;
+  user_id: string;
+  date: string; // YYYY-MM-DD
+  total_items: number;
+  total_estimated_minutes: number;
+  completed_items: number;
+  completed_minutes: number;
+  pressure_score: number;
+  pressure_band: PressureBand;
+  streak_count: number;
+  items: QueueItem[];
+  available_minutes_today?: number;
+  compression_ratio?: number;
+  created_at?: string;
+}
+
+export interface UserProfile {
+  id: string;
+  name: string;
+  email?: string;
+  institution?: string;
+  department: string;
+  level: string;
+  current_cgpa: number;
+  target_cgpa: number;
+  scale_cgpa: number;
+  weekly_available_minutes: number;
+  streak_days: number;
+  onboarding_completed: boolean;
+  pressure_score?: number;
+  pressure_band?: PressureBand;
+  created_at?: string;
+}
+
+export interface OnboardingState {
+  step: number;
+  profile: {
+    name: string;
+    department: string;
+    level: string;
+    target_cgpa: number;
+    scale_cgpa: number;
+    weekly_available_hours: number;
+  };
+  semester: {
+    name: string;
+    start_date: string;
+    end_date: string;
+    exam_start_date: string;
+  };
+  courses: {
+    code: string;
+    name: string;
+    units: number;
+    priority_weight: number;
+    target_grade: 'A' | 'B' | 'C';
+  }[];
+  outlines: {
+    course_code: string;
+    topics_count: number;
+    source: string;
+  }[];
+}
+
+
